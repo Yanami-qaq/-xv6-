@@ -121,6 +121,10 @@ panic(char *s)
   printf("panic: ");
   printf(s);
   printf("\n");
+  
+  // 在panic时打印backtrace
+  backtrace();
+  
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
@@ -131,4 +135,49 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+// 实现backtrace函数，打印调用栈
+void
+backtrace(void)
+{
+  printf("backtrace:\n");
+  
+  // 获取当前帧指针
+  uint64 fp = r_fp();
+  
+  // 遍历调用栈，最多打印10层
+  int depth = 0;
+  while(fp != 0 && depth < 10) {
+    // 计算栈页的边界
+    uint64 stack_top = PGROUNDUP(fp);
+    uint64 stack_bottom = PGROUNDDOWN(fp);
+    
+    // 检查帧指针是否在有效的栈页内
+    if(fp < stack_bottom || fp >= stack_top) {
+      break;
+    }
+    
+    // 获取返回地址（帧指针-8的位置）
+    uint64 ra = *(uint64*)(fp - 8);
+    
+    // 检查返回地址是否在合理的内核地址范围内（0x80000000到0x80000000+2MB）
+    if(ra < 0x80000000 || ra > 0x80000000 + 0x200000) {
+      break;
+    }
+    
+    // 打印返回地址（使用%p格式符来正确显示64位地址，格式为0x000000008000xxxx）
+    printf("%p\n", ra);
+    
+    // 获取上一个帧指针（帧指针-16的位置）
+    uint64 prev_fp = *(uint64*)(fp - 16);
+    
+    // 检查上一个帧指针是否有效
+    if(prev_fp <= fp || prev_fp >= stack_top || prev_fp == 0) {
+      break;
+    }
+    
+    fp = prev_fp;
+    depth++;
+  }
 }

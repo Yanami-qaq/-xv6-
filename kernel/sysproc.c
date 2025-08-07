@@ -70,6 +70,10 @@ sys_sleep(void)
     sleep(&ticks, &tickslock);
   }
   release(&tickslock);
+  
+  // 调用backtrace函数打印调用栈
+  backtrace();
+  
   return 0;
 }
 
@@ -94,4 +98,50 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+// 实现sigalarm系统调用
+uint64
+sys_sigalarm(void)
+{
+  int interval;
+  uint64 handler;
+  
+  // 获取参数
+  if(argint(0, &interval) < 0)
+    return -1;
+  if(argaddr(1, &handler) < 0)
+    return -1;
+  
+  struct proc *p = myproc();
+  
+  // 设置alarm参数
+  p->alarm_interval = interval;
+  p->alarm_handler = handler;
+  p->alarm_ticks = 0;
+  p->alarm_pending = 0;
+  
+  return 0;
+}
+
+// 实现sigreturn系统调用
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = myproc();
+  
+  // 检查是否有保存的trapframe
+  if(p->alarm_trapframe == 0) {
+    return -1;
+  }
+  
+  // 恢复trapframe
+  memmove(p->trapframe, p->alarm_trapframe, sizeof(struct trapframe));
+  
+  // 释放保存的trapframe
+  kfree(p->alarm_trapframe);
+  p->alarm_trapframe = 0;
+  p->alarm_pending = 0;
+  
+  return 0;
 }
