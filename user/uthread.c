@@ -10,10 +10,30 @@
 #define STACK_SIZE  8192
 #define MAX_THREAD  4
 
+// Saved registers for kernel context switches.
+struct uthread_context {
+  uint64 ra;
+  uint64 sp;
+
+  // callee-saved
+  uint64 s0;
+  uint64 s1;
+  uint64 s2;
+  uint64 s3;
+  uint64 s4;
+  uint64 s5;
+  uint64 s6;
+  uint64 s7;
+  uint64 s8;
+  uint64 s9;
+  uint64 s10;
+  uint64 s11;
+};
 
 struct thread {
-  char       stack[STACK_SIZE]; /* the thread's stack */
-  int        state;             /* FREE, RUNNING, RUNNABLE */
+  char       stack[STACK_SIZE];     /* the thread's stack */
+  int        state;                 /* FREE, RUNNING, RUNNABLE */
+  struct uthread_context context;   /* thread context */
 };
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
@@ -62,6 +82,7 @@ thread_schedule(void)
      * Invoke thread_switch to switch from t to next_thread:
      * thread_switch(??, ??);
      */
+    thread_switch((uint64)&t->context, (uint64)&next_thread->context);
   } else
     next_thread = 0;
 }
@@ -76,6 +97,21 @@ thread_create(void (*func)())
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
+  t->context.ra = (uint64)func;
+  t->context.sp = (uint64)(t->stack + STACK_SIZE);  // 指向栈顶
+  // 初始化其他寄存器为0
+  t->context.s0 = 0;
+  t->context.s1 = 0;
+  t->context.s2 = 0;
+  t->context.s3 = 0;
+  t->context.s4 = 0;
+  t->context.s5 = 0;
+  t->context.s6 = 0;
+  t->context.s7 = 0;
+  t->context.s8 = 0;
+  t->context.s9 = 0;
+  t->context.s10 = 0;
+  t->context.s11 = 0;
 }
 
 void 
