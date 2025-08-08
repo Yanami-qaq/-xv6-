@@ -1,4 +1,5 @@
 #include "types.h"
+#include "riscv.h"
 
 void*
 memset(void *dst, int c, uint n)
@@ -99,6 +100,11 @@ int
 strlen(const char *s)
 {
   int n;
+
+  // 检查指针的有效性
+  if((uint64)s >= MAXVA) {
+    return 0;
+  }
 
   for(n = 0; s[n]; n++)
     ;

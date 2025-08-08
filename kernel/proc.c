@@ -261,6 +261,10 @@ growproc(int n)
       return -1;
     }
   } else if(n < 0){
+    // 确保不会释放过多内存
+    if((int)sz + n < 0) {
+      n = -(int)sz;
+    }
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;

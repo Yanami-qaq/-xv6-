@@ -79,6 +79,10 @@ exec(char *path, char **argv)
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
       goto bad;
+    // 检查指针的有效性
+    if((uint64)argv[argc] >= MAXVA) {
+      goto bad;
+    }
     sp -= strlen(argv[argc]) + 1;
     sp -= sp % 16; // riscv sp must be 16-byte aligned
     if(sp < stackbase)

@@ -65,6 +65,45 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if (r_scause() == 12 || r_scause() == 13 || r_scause() == 15) {
+    // Store/AMO page fault(write page fault) and Load page fault
+    // see Volume II: RISC-V Privileged Architectures V20211203 Page 71
+
+    // the faulting virtual address
+    // see Volume II: RISC-V Privileged Architectures V20211203 Page 41
+    // the download url is https://github.com/riscv/riscv-isa-manual/releases/download/Priv-v1.12/riscv-privileged-20211203.pdf
+    uint64 va = r_stval();
+    if (va >= p->sz || va >= MAXVA) {
+      p->killed = 1;
+    } else {
+      // 检查是否是COW页面错误
+      pte_t *pte = walk(p->pagetable, va, 0);
+      if (pte == 0 || (*pte & PTE_V) == 0) {
+        p->killed = 1;
+      } else if (*pte & PTE_COW) {
+        // COW页面错误处理
+        char *mem;
+        if ((mem = kalloc()) == 0) {
+          // 内存分配失败，杀死进程
+          p->killed = 1;
+        } else {
+          // 复制页面内容
+          uint64 pa = PTE2PA(*pte);
+          memmove(mem, (char*)pa, PGSIZE);
+          
+          // 减少旧页面的引用计数
+          kunrefpage((void*)pa);
+          
+          // 更新PTE，设置为可写并清除COW标志
+          uint flags = PTE_FLAGS(*pte);
+          *pte = PA2PTE(mem) | flags | PTE_W;
+          *pte &= ~PTE_COW;
+        }
+      } else {
+        // 其他页面错误，杀死进程
+        p->killed = 1;
+      }
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

@@ -54,7 +54,7 @@ void
 threetest()
 {
   uint64 phys_size = PHYSTOP - KERNBASE;
-  int sz = phys_size / 4;
+  int sz = phys_size / 6;  // 减少内存使用，从1/4改为1/6
   int pid1, pid2;
 
   printf("three: ");
@@ -98,7 +98,8 @@ threetest()
     *(int*)q = getpid();
   }
 
-  wait(0);
+  // 等待所有子进程
+  while(wait(0) > 0);
 
   sleep(1);
 
@@ -186,7 +187,15 @@ main(int argc, char *argv[])
   simpletest();
 
   threetest();
+  
+  // 在测试之间添加一些延迟，让系统有时间清理内存
+  sleep(10);
+  
   threetest();
+  
+  // 在测试之间添加一些延迟，让系统有时间清理内存
+  sleep(10);
+  
   threetest();
 
   filetest();
