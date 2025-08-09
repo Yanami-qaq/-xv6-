@@ -281,8 +281,15 @@ fork(void)
     return -1;
   }
 
-  // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  // Copy user memory from parent to child, but skip mmap regions
+  uint64 copy_sz = p->sz;
+  for(i = 0; i < NVMA; i++) {
+    if(p->vma[i].addr != 0 && p->vma[i].addr < copy_sz) {
+      copy_sz = p->vma[i].addr;
+    }
+  }
+  
+  if(uvmcopy(p->pagetable, np->pagetable, copy_sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -294,6 +301,16 @@ fork(void)
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
+  
+  // Copy VMA structures but don't copy actual mmap pages
+  for(i = 0; i < NVMA; i++) {
+    if(p->vma[i].addr != 0) {
+      np->vma[i] = p->vma[i];
+      if(np->vma[i].f != 0) {
+        np->vma[i].f = filedup(np->vma[i].f);
+      }
+    }
+  }
 
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
@@ -350,6 +367,35 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  // Clean up all VMA mappings - lab 10
+  for(int i = 0; i < NVMA; i++){
+    if(p->vma[i].addr != 0){
+      // Unmap all pages in this VMA
+      for(uint64 va = p->vma[i].addr; va < p->vma[i].addr + p->vma[i].len; va += PGSIZE){
+        pte_t *pte = walk(p->pagetable, va, 0);
+        if(pte && (*pte & PTE_V)){
+          // Page is mapped, unmap it
+          uint64 pa = PTE2PA(*pte);
+          *pte = 0;
+          kfree((void*)pa);
+        }
+      }
+      
+      // Close the mapped file if any
+      if(p->vma[i].f != 0){
+        fileclose(p->vma[i].f);
+        p->vma[i].f = 0;
+      }
+      
+      // Clear VMA entry
+      p->vma[i].addr = 0;
+      p->vma[i].len = 0;
+      p->vma[i].prot = 0;
+      p->vma[i].flags = 0;
+      p->vma[i].offset = 0;
     }
   }
 

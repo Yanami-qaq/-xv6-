@@ -65,6 +65,23 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 13 || r_scause() == 15) {
+    // page fault or load page fault
+    uint64 va = r_stval();
+    
+    // Check if this is a mmap page fault
+    if(va >= MMAPMINADDR && va < TRAPFRAME) {
+      // Try to handle mmap page fault
+      if(handle_mmap_fault(va) == 0) {
+        // Successfully handled, continue
+        goto done;
+      }
+    }
+    
+    // Not a mmap fault or failed to handle
+    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    p->killed = 1;
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -73,6 +90,7 @@ usertrap(void)
     p->killed = 1;
   }
 
+done:
   if(p->killed)
     exit(-1);
 

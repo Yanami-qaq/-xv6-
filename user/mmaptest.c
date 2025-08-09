@@ -10,8 +10,6 @@ void mmap_test();
 void fork_test();
 char buf[BSIZE];
 
-#define MAP_FAILED ((char *) -1)
-
 int
 main(int argc, char *argv[])
 {

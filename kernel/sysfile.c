@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -482,5 +483,217 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+// mmap system call - lab 10
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  int len, prot, flags, fd, offset;
+  struct file *f;
+  struct proc *p = myproc();
+  
+  // Get arguments
+  if(argaddr(0, &addr) < 0 || argint(1, &len) < 0 || argint(2, &prot) < 0 ||
+     argint(3, &flags) < 0 || argint(4, &fd) < 0 || argint(5, &offset) < 0)
+    return -1;
+  
+  // Check parameters
+  if(len <= 0 || offset < 0)
+    return -1;
+  
+  // Check flags
+  if(flags != MAP_SHARED && flags != MAP_PRIVATE)
+    return -1;
+  
+  // Get file descriptor
+  if(fd < 0 || fd >= NOFILE || (f = p->ofile[fd]) == 0)
+    return -1;
+  
+  // Check permissions: if requesting write access for MAP_SHARED, file must be opened for writing
+  if((prot & PROT_WRITE) && (flags & MAP_SHARED) && !(f->type == FD_INODE && f->writable))
+    return -1;
+  
+  // Find available VMA
+  int i;
+  for(i = 0; i < NVMA; i++) {
+    if(p->vma[i].addr == 0)
+      break;
+  }
+  if(i == NVMA)
+    return -1;
+  
+  // Calculate map address
+  uint64 map_addr = MMAPMINADDR;
+  for(int j = 0; j < NVMA; j++) {
+    if(p->vma[j].addr != 0) {
+      uint64 end = p->vma[j].addr + p->vma[j].len;
+      if(end > map_addr)
+        map_addr = end;
+    }
+  }
+  map_addr = PGROUNDUP(map_addr);
+  
+  // Check if mapping would overlap with TRAPFRAME
+  if(map_addr + len > TRAPFRAME)
+    return -1;
+  
+  // Set VMA
+  p->vma[i].addr = map_addr;
+  p->vma[i].len = len;
+  p->vma[i].prot = prot;
+  p->vma[i].flags = flags;
+  p->vma[i].offset = offset;
+  p->vma[i].f = filedup(f);  // Increase reference count
+  
+  return map_addr;
+}
+
+// munmap system call - lab 10
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int len;
+  struct proc *p = myproc();
+  
+  // Get arguments
+  if(argaddr(0, &addr) < 0 || argint(1, &len) < 0)
+    return -1;
+  
+  // Check parameters
+  if(len <= 0)
+    return -1;
+  
+  // Find corresponding VMA
+  int i;
+  for(i = 0; i < NVMA; i++) {
+    if(i < NVMA && p->vma[i].addr != 0 && addr >= p->vma[i].addr && 
+       addr < p->vma[i].addr + p->vma[i].len)
+      break;
+  }
+  if(i == NVMA)
+    return -1;
+  
+  struct vm_area *vma = &p->vma[i];
+  
+  // If MAP_SHARED, write back dirty pages
+  if(vma->flags & MAP_SHARED && vma->f != 0) {
+    for(uint64 va = addr; va < addr + len; va += PGSIZE) {
+      pte_t *pte = walk(p->pagetable, va, 0);
+      if(pte && (*pte & PTE_V)) {
+        // Page is mapped, check if dirty
+        if(uvmgetdirty(p->pagetable, va)) {
+          // Write back dirty page
+          char *pa = (char *)PTE2PA(*pte);
+          begin_op();
+          ilock(vma->f->ip);
+          writei(vma->f->ip, 0, (uint64)pa, va - vma->addr + vma->offset, PGSIZE);
+          iunlock(vma->f->ip);
+          end_op();
+        }
+      }
+    }
+  }
+  
+  // Unmap pages that are actually mapped
+  for(uint64 va = addr; va < addr + len; va += PGSIZE) {
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if(pte && (*pte & PTE_V)) {
+      // Page is mapped, unmap it
+      uint64 pa = PTE2PA(*pte);
+      *pte = 0;
+      kfree((void*)pa);
+    }
+  }
+  
+  // Update VMA
+  if(addr == vma->addr && len >= vma->len) {
+    // Unmapping entire region
+    if(vma->f != 0) {
+      fileclose(vma->f);
+      vma->f = 0;
+    }
+    vma->addr = 0;
+    vma->len = 0;
+    vma->prot = 0;
+    vma->flags = 0;
+    vma->offset = 0;
+  } else if(addr == vma->addr) {
+    // Unmapping from beginning
+    vma->addr += len;
+    vma->offset += len;
+    vma->len -= len;
+  } else if(addr + len == vma->addr + vma->len) {
+    // Unmapping from end
+    vma->len -= len;
+  }
+  
+  return 0;
+}
+
+// Handle mmap page fault - lab 10
+int
+handle_mmap_fault(uint64 va)
+{
+  struct proc *p = myproc();
+  if(p == 0)
+    return -1;
+  
+  // Find corresponding VMA
+  int i;
+  for(i = 0; i < NVMA; i++) {
+    if(p->vma[i].addr != 0 && va >= p->vma[i].addr && 
+       va < p->vma[i].addr + p->vma[i].len)
+      break;
+  }
+  if(i == NVMA)
+    return -1;
+  
+  struct vm_area *vma = &p->vma[i];
+  
+  // Calculate page offset
+  uint64 page_offset = va - vma->addr;
+  uint64 file_offset = vma->offset + page_offset;
+  
+  // Allocate physical page
+  char *pa = kalloc();
+  if(pa == 0)
+    return -1;
+  
+  // Clear the page
+  memset(pa, 0, PGSIZE);
+  
+  // Read file content if within file bounds
+  if(vma->f != 0 && file_offset < vma->f->ip->size) {
+    uint64 bytes_to_read = PGSIZE;
+    if(file_offset + bytes_to_read > vma->f->ip->size)
+      bytes_to_read = vma->f->ip->size - file_offset;
+    
+    if(bytes_to_read > 0) {
+      begin_op();
+      ilock(vma->f->ip);
+      readi(vma->f->ip, 0, (uint64)pa, file_offset, bytes_to_read);
+      iunlock(vma->f->ip);
+      end_op();
+    }
+  }
+  
+  // Map the page
+  int flags = PTE_U;
+  if(vma->prot & PROT_READ)
+    flags |= PTE_R;
+  if(vma->prot & PROT_WRITE)
+    flags |= PTE_W;
+  if(vma->prot & PROT_EXEC)
+    flags |= PTE_X;
+  
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)pa, flags) != 0) {
+    kfree(pa);
+    return -1;
+  }
+  
   return 0;
 }

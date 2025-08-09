@@ -432,3 +432,23 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+// Check if a page is dirty - lab 10
+int
+uvmgetdirty(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte = walk(pagetable, va, 0);
+  if(pte == 0 || (*pte & PTE_V) == 0)
+    return 0;
+  return (*pte & PTE_D) != 0;
+}
+
+// Set dirty flag and write permission - lab 10
+void
+uvmsetdirtywrite(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte = walk(pagetable, va, 0);
+  if(pte == 0)
+    return;
+  *pte |= PTE_D | PTE_W;
+}
