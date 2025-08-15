@@ -141,6 +141,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // Initialize trace mask
+  p->trace_mask = 0;
+
   return p;
 }
 
@@ -164,6 +167,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->trace_mask = 0;
 }
 
 // Create a user page table for a given process,
@@ -301,7 +305,10 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
-  safestrcpy(np->name, p->name, sizeof(p->name));
+  safestrcpy(np->name, p->name, sizeof(np->name));
+
+  // Copy trace mask from parent to child
+  np->trace_mask = p->trace_mask;
 
   pid = np->pid;
 
@@ -653,4 +660,22 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// Count active processes
+int
+nproc(void)
+{
+  struct proc *p;
+  int count = 0;
+  
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      count++;
+    }
+    release(&p->lock);
+  }
+  
+  return count;
 }

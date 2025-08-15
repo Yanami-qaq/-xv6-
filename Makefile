@@ -194,8 +194,11 @@ UPROGS=\
 	$U/_wc\
 	$U/_zombie\
 
-
-
+ifeq ($(LAB),syscall)
+UPROGS += \
+	$U/_trace\
+	$U/_sysinfotest
+endif
 
 ifeq ($(LAB),$(filter $(LAB), pgtbl lock))
 UPROGS += \
