@@ -83,6 +83,16 @@ sys_pgaccess(void)
   // lab pgtbl: your code here.
   return 0;
 }
+
+int
+sys_vmprint(void)
+{
+  uint64 pagetable;
+  if(argaddr(0, &pagetable) < 0)
+    return -1;
+  vmprint((pagetable_t)pagetable);
+  return 0;
+}
 #endif
 
 uint64
